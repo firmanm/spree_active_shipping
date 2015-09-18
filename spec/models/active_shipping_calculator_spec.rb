@@ -7,6 +7,7 @@ module ActiveShipping
     # NOTE: All specs will use the bogus calculator (no login information needed)
 
     let(:address) { FactoryGirl.create(:address) }
+    let(:stock_location) { FactoryGirl.create(:stock_location) }
     let!(:order) do
       order = FactoryGirl.create(:order_with_line_items, :ship_address => address, :line_items_count => 2)
       order.line_items.first.tap do |line_item|
@@ -34,12 +35,21 @@ module ActiveShipping
     let(:package) { order.shipments.first.to_package }
 
     before(:each) do
+      Spree::StockLocation.destroy_all
+      stock_location
       order.create_proposed_shipments
       order.shipments.count.should == 1
       Spree::ActiveShipping::Config.set(:units => "imperial")
       Spree::ActiveShipping::Config.set(:unit_multiplier => 1)
       calculator.stub(:carrier).and_return(carrier)
       Rails.cache.clear
+    end
+
+    describe "package.order" do
+      it{ expect(package.order).to eq(order) }
+      it{ expect(package.order.ship_address).to eq(address) }
+      it{ expect(package.order.ship_address.country.iso).to eq('US') }
+      it{ expect(package.stock_location).to eq(stock_location) }
     end
 
     describe "available" do
@@ -82,6 +92,17 @@ module ActiveShipping
         it "should return false" do
           calculator.available?(package).should be(false)
         end
+      end
+    end
+
+    describe "available?" do
+      # regression test for #164 and #171
+      it "should not return rates if the weight requirements for the destination country are not met" do
+        # if max_weight_for_country is nil -> the carrier does not ship to that country
+        # if max_weight_for_country is 0 -> the carrier does not have weight restrictions to that country
+        calculator.stub(:max_weight_for_country).and_return(nil)
+        calculator.should_receive(:is_package_shippable?).and_raise Spree::ShippingError
+        calculator.available?(package).should be(false)
       end
     end
 
